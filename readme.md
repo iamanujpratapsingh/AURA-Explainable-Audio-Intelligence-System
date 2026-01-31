@@ -1,7 +1,7 @@
 
-🎙️ NovaTech AURA 
+🎙️ AURA: Explainable Audio Intelligence System
 
-**NovaTech AURA** (Audio Understanding & Reasoning Agent) is a cloud-native audio forensics dashboard.. It replaces traditional, heavy local machine learning models with the speed and intelligence. **Functional TRL-4 Prototype**.
+**AURA: Explainable Audio Intelligence System** (Audio Understanding & Reasoning Agent) is a cloud-native audio forensics dashboard.. It replaces traditional, heavy local machine learning models with the speed and intelligence. **Functional TRL-4 Prototype**.
 
 This system transforms raw audio files into actionable intelligence by generating transcripts, detecting granular emotions, identifying key sound events, and providing vocal executive summaries in seconds.
 
@@ -122,3 +122,4 @@ NovaTech_AURA/
 
 
 ```
+
