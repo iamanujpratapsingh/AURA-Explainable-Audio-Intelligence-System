@@ -1,22 +1,33 @@
-import google.generativeai as genai
 import os
+import sys
+from dotenv import load_dotenv
+from google import genai
 
-# ---------------------------------------------------------
-# PASTE YOUR API KEY BELOW TO TEST
-# ---------------------------------------------------------
-API_KEY = "AIzaSyDAWuB6s6OVUc-BdOWWdSYW9dx9RyREw1k"
+# Fix Windows terminal Unicode
+sys.stdout.reconfigure(encoding="utf-8")
 
-genai.configure(api_key=API_KEY)
+load_dotenv()
 
-print("--- 🔍 Checking Available Google Models ---")
+API_KEY = os.getenv("GEMINI_API_KEY")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+
+print("--- Checking Gemini Configuration ---")
+print(f"Configured model: {MODEL}")
+
+if not API_KEY or API_KEY == "YOUR_GEMINI_API_KEY":
+    print("ERROR: GEMINI_API_KEY not set. Add it to your .env file.")
+    print("Get a free key at: https://aistudio.google.com/")
+    sys.exit(1)
+
 try:
-    count = 0
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            print(f"✅ Found: {m.name}")
-            count += 1
-    if count == 0:
-        print("❌ No models found. Check your API Key permissions.")
+    client = genai.Client(api_key=API_KEY)
+    response = client.models.generate_content(model=MODEL, contents="Reply with exactly: OK")
+    print(f"SUCCESS: Model '{MODEL}' is reachable. Response: {response.text.strip()}")
 except Exception as e:
-    print(f"❌ Error: {e}")
-print("-------------------------------------------")
+    print(f"FAILED: {e}")
+    if "API_KEY_INVALID" in str(e) or "invalid" in str(e).lower():
+        print("Your API key appears to be invalid.")
+        print("A valid Gemini API key starts with 'AIza...'")
+        print("Get one at: https://aistudio.google.com/")
+
+print("-------------------------------------")
