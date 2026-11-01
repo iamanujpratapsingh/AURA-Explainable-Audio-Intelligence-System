@@ -279,7 +279,10 @@ def consume_live_transcription_events(transcriber):
 def render_live_microphone():
     capture = st.session_state.live_capture
     transcriber = st.session_state.live_transcriber
-    rtc_configuration = build_rtc_configuration(st.secrets)
+    rtc_configuration = st.session_state.live_rtc_configuration
+    if rtc_configuration is None:
+        rtc_configuration = build_rtc_configuration(st.secrets)
+        st.session_state.live_rtc_configuration = rtc_configuration
     context = webrtc_streamer(
         key=f"aura-live-microphone-{st.session_state.live_stream_generation}",
         mode=WebRtcMode.SENDONLY,
@@ -666,6 +669,7 @@ for key, default in [("processed", False), ("chat_history", []), ("alert_history
                       ("acknowledged_alerts", []), ("monitoring_active", False),
                       ("monitoring_paused", False),
                       ("live_capture", None), ("live_recording_bytes", b""),
+                      ("live_rtc_configuration", None),
                       ("live_monitor_error", ""), ("live_stream_generation", 0),
                       ("live_monitor_started_at", None),
                       ("live_monitor_playing_at", None),
@@ -871,6 +875,7 @@ elif mode == "🎙️ Live Monitor":
         st.session_state.live_capture = LiveAudioCapture(
             pcm_sink=transcriber.submit_audio if transcriber else None
         )
+        st.session_state.live_rtc_configuration = build_rtc_configuration(st.secrets)
         st.session_state.live_recording_bytes = b""
         st.session_state.live_monitor_error = ""
         st.session_state.live_transcription_error = ""
