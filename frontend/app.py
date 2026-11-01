@@ -300,6 +300,15 @@ def render_live_microphone():
             transcription_queue_size = audio_queue.qsize() if audio_queue is not None else 0
     else:
         transcription_queue_size = 0
+    transcriber_diagnostics = (
+        transcriber.diagnostics if transcriber else {
+            "status": "unavailable",
+            "audio_queue_size": 0,
+            "submitted_audio_chunks": 0,
+            "sent_audio_chunks": 0,
+            "last_audio_sent_monotonic": None,
+        }
+    )
     if context.state.playing and st.session_state.live_monitor_playing_at is None:
         st.session_state.live_monitor_playing_at = time.monotonic()
     elif not context.state.playing:
@@ -397,6 +406,54 @@ def render_live_microphone():
         f"{capture_diagnostics['channels'] or 'unknown'} channel(s) · "
         f"transcription queue: {transcription_queue_size}"
     )
+    diagnostics_cols = st.columns(4)
+    diagnostics_cols[0].metric(
+        "Microphone",
+        "Receiving" if capture_diagnostics["frame_count"] else (
+            "Playing" if context.state.playing else "Waiting"
+        ),
+    )
+    diagnostics_cols[1].metric("Frames received", capture_diagnostics["frame_count"])
+    diagnostics_cols[2].metric(
+        "Last frame",
+        f"{capture_diagnostics['last_frame_duration_ms']:.1f} ms"
+        if capture_diagnostics["frame_count"] else "None",
+    )
+    diagnostics_cols[3].metric(
+        "RMS energy",
+        f"{capture_diagnostics['rms']:.4f}",
+    )
+    with st.expander("Live diagnostics", expanded=bool(capture_diagnostics["callback_error"])):
+        st.json(
+            {
+                "webrtc_signalling": context.state.signalling,
+                "webrtc_playing": context.state.playing,
+                "microphone_initialization": (
+                    "receiving_audio" if capture_diagnostics["frame_count"]
+                    else "connected_waiting_for_audio" if context.state.playing
+                    else "initializing_or_permission_pending"
+                ),
+                "received_audio_frames": capture_diagnostics["frame_count"],
+                "processed_audio_frames": capture_diagnostics["processed_frame_count"],
+                "last_frame_monotonic": capture_diagnostics["last_frame_monotonic"],
+                "sample_rate_hz": capture_diagnostics["sample_rate"],
+                "channels": capture_diagnostics["channels"],
+                "format": capture_diagnostics["format"],
+                "samples_per_frame": capture_diagnostics["samples"],
+                "frame_duration_ms": capture_diagnostics["frame_duration_ms"],
+                "rms_energy": capture_diagnostics["rms"],
+                "audio_queue_size": transcription_queue_size,
+                "submitted_audio_chunks": transcriber_diagnostics["submitted_audio_chunks"],
+                "sent_audio_chunks": transcriber_diagnostics["sent_audio_chunks"],
+                "last_audio_sent_monotonic": transcriber_diagnostics["last_audio_sent_monotonic"],
+                "transcription_status": transcriber_diagnostics["status"],
+                "transcription_queue_status": (
+                    "queued_audio" if transcription_queue_size else "empty"
+                ),
+                "callback_error": capture_diagnostics["callback_error"],
+                "callback_error_count": capture_diagnostics["callback_error_count"],
+            }
+        )
     if capture_diagnostics["callback_error_count"]:
         st.error(
             f"Audio callback errors: {capture_diagnostics['callback_error_count']} · "

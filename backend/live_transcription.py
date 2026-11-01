@@ -67,6 +67,9 @@ class LiveTranscriptionService:
         self._error = ""
         self._dropped_audio_chunks = 0
         self._dropped_events = 0
+        self._submitted_audio_chunks = 0
+        self._sent_audio_chunks = 0
+        self._last_audio_sent_monotonic = None
         self._final_signatures = set()
         self._final_signature_order = deque(maxlen=256)
         self._last_capture_seconds = 0.0
@@ -98,6 +101,9 @@ class LiveTranscriptionService:
             return {
                 "status": self._status,
                 "audio_queue_size": self.audio_queue.qsize(),
+                "submitted_audio_chunks": self._submitted_audio_chunks,
+                "sent_audio_chunks": self._sent_audio_chunks,
+                "last_audio_sent_monotonic": self._last_audio_sent_monotonic,
                 "dropped_audio_chunks": self._dropped_audio_chunks,
                 "dropped_events": self._dropped_events,
                 "connected": self._connected_event.is_set(),
@@ -134,6 +140,8 @@ class LiveTranscriptionService:
         )
         try:
             self.audio_queue.put_nowait(item)
+            with self._lock:
+                self._submitted_audio_chunks += 1
             return True
         except queue.Full:
             try:
@@ -144,6 +152,8 @@ class LiveTranscriptionService:
                 self._dropped_audio_chunks += 1
             try:
                 self.audio_queue.put_nowait(item)
+                with self._lock:
+                    self._submitted_audio_chunks += 1
                 return True
             except queue.Full:
                 with self._lock:
@@ -259,6 +269,8 @@ class LiveTranscriptionService:
         with self._lock:
             self._last_capture_seconds = captured_seconds
             self._last_capture_monotonic = captured_monotonic
+            self._sent_audio_chunks += 1
+            self._last_audio_sent_monotonic = time.monotonic()
 
     async def _receive_transcriptions(self, session):
         async for response in session.receive():

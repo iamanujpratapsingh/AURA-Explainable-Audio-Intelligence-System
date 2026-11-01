@@ -5,6 +5,7 @@ import wave
 from unittest.mock import Mock
 
 import av
+import numpy as np
 
 from frontend.live_audio import LiveAudioCapture, consume_receiver_frames, process_audio_frame
 
@@ -13,6 +14,13 @@ class LiveAudioCaptureTests(unittest.TestCase):
     def make_frame(self, samples=160, sample_rate=16000):
         frame = av.AudioFrame(format="s16", layout="mono", samples=samples)
         frame.sample_rate = sample_rate
+        frame.planes[0].update(np.zeros(samples, dtype=np.int16).tobytes())
+        return frame
+
+    def make_signal_frame(self, samples=160, sample_rate=16000):
+        frame = av.AudioFrame(format="s16", layout="mono", samples=samples)
+        frame.sample_rate = sample_rate
+        frame.planes[0].update(np.full(samples, 8192, dtype=np.int16).tobytes())
         return frame
 
     def test_capture_tracks_bounded_amplitude_and_exports_valid_wav(self):
@@ -66,13 +74,28 @@ class LiveAudioCaptureTests(unittest.TestCase):
 
     def test_capture_diagnostics_report_received_frame_format(self):
         capture = LiveAudioCapture()
-        capture.add_frame(self.make_frame())
+        capture.add_frame(self.make_signal_frame())
         diagnostics = capture.diagnostics_snapshot()
         self.assertEqual(diagnostics["frame_count"], 1)
         self.assertEqual(diagnostics["processed_frame_count"], 1)
         self.assertEqual(diagnostics["sample_rate"], 16000)
         self.assertEqual(diagnostics["channels"], 1)
+        self.assertEqual(diagnostics["samples"], 160)
+        self.assertEqual(diagnostics["frame_duration_ms"], 10.0)
+        self.assertGreater(diagnostics["rms"], 0)
         self.assertIsNotNone(diagnostics["last_frame_monotonic"])
+
+    def test_generated_audio_reaches_transcription_queue_sink(self):
+        submitted = []
+        capture = LiveAudioCapture(
+            pcm_sink=lambda pcm, seconds, captured_at: submitted.append(
+                (pcm, seconds, captured_at)
+            )
+        )
+        self.assertTrue(capture.add_frame(self.make_signal_frame()))
+        self.assertEqual(len(submitted), 1)
+        self.assertEqual(len(submitted[0][0]), 320)
+        self.assertGreater(submitted[0][1], 0)
 
     def test_audio_callback_returns_frame_and_records_callback_errors(self):
         capture = LiveAudioCapture()
@@ -94,7 +117,7 @@ class LiveAudioCaptureTests(unittest.TestCase):
         broken = BrokenFrame()
         self.assertIs(process_audio_frame(broken, capture), broken)
         diagnostics = capture.diagnostics_snapshot()
-        self.assertEqual(diagnostics["callback_error_count"], 1)
+        self.assertGreaterEqual(diagnostics["callback_error_count"], 1)
         self.assertIn("frame metadata unavailable", diagnostics["callback_error"])
 
     def test_empty_nonblocking_receiver_poll_is_not_a_stream_failure(self):

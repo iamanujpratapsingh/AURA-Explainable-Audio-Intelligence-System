@@ -53,6 +53,9 @@ class LiveAudioCapture:
         self.last_frame_sample_rate = None
         self.last_frame_channels = None
         self.last_frame_format = None
+        self.last_frame_samples = 0
+        self.last_frame_duration_ms = 0.0
+        self.last_rms = 0.0
         self.processed_frame_count = 0
         self.callback_error = ""
         self.callback_error_count = 0
@@ -68,16 +71,28 @@ class LiveAudioCapture:
 
     def add_frame(self, frame):
         frame_received_at = time.monotonic()
-        sample_rate = getattr(frame, "sample_rate", None)
-        layout = getattr(frame, "layout", None)
-        channels = len(layout.channels) if layout and layout.channels else 0
-        frame_format = str(getattr(frame, "format", "") or "")
         with self.lock:
             self.frame_count += 1
             self.last_frame_monotonic = frame_received_at
+        sample_rate = getattr(frame, "sample_rate", None)
+        layout = getattr(frame, "layout", None)
+        try:
+            channels = len(layout.channels) if layout and layout.channels else 0
+        except (TypeError, AttributeError):
+            channels = 0
+        frame_format = str(getattr(frame, "format", "") or "")
+        frame_samples = int(getattr(frame, "samples", 0) or 0)
+        frame_duration_ms = (
+            frame_samples / float(sample_rate) * 1000
+            if sample_rate and frame_samples
+            else 0.0
+        )
+        with self.lock:
             self.last_frame_sample_rate = sample_rate
             self.last_frame_channels = channels
             self.last_frame_format = frame_format
+            self.last_frame_samples = frame_samples
+            self.last_frame_duration_ms = frame_duration_ms
         if not sample_rate or not channels:
             logger.warning(
                 "Received invalid WebRTC audio frame: sample_rate=%r channels=%r format=%r",
@@ -111,6 +126,7 @@ class LiveAudioCapture:
                 capture_seconds = self.total_bytes / 32000
                 self.amplitudes.append(amplitude)
                 self.amplitude_points.append((capture_seconds, amplitude))
+                self.last_rms = round(min(1.0, rms), 6)
                 emitted_chunks.append((pcm_bytes, capture_seconds, time.monotonic()))
                 self.processed_frame_count += 1
             pcm_sink = self.pcm_sink
@@ -130,6 +146,9 @@ class LiveAudioCapture:
                 "sample_rate": self.last_frame_sample_rate,
                 "channels": self.last_frame_channels,
                 "format": self.last_frame_format,
+                "samples": self.last_frame_samples,
+                "frame_duration_ms": self.last_frame_duration_ms,
+                "rms": self.last_rms,
                 "duration_seconds": self.total_bytes / bytes_per_second if bytes_per_second else 0.0,
                 "callback_error": self.callback_error,
                 "callback_error_count": self.callback_error_count,
