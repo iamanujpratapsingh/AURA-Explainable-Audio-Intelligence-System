@@ -292,6 +292,13 @@ def render_live_microphone():
         audio_receiver_size=64,
     )
     capture_diagnostics = capture.diagnostics_snapshot()
+    if transcriber:
+        transcription_queue_size = getattr(transcriber, "audio_queue_size", None)
+        if transcription_queue_size is None:
+            audio_queue = getattr(transcriber, "audio_queue", None)
+            transcription_queue_size = audio_queue.qsize() if audio_queue is not None else 0
+    else:
+        transcription_queue_size = 0
     if context.state.playing and st.session_state.live_monitor_playing_at is None:
         st.session_state.live_monitor_playing_at = time.monotonic()
     elif not context.state.playing:
@@ -308,7 +315,7 @@ def render_live_microphone():
         capture_diagnostics["channels"],
         capture_diagnostics["format"],
         transcriber.status if transcriber else "unavailable",
-        transcriber.audio_queue_size if transcriber else 0,
+        transcription_queue_size,
     )
     if context.state.playing:
         if transcriber and transcriber.status == "idle":
@@ -393,7 +400,7 @@ def render_live_microphone():
         f"last frame: {capture_diagnostics['last_frame_monotonic'] or 'none'} · "
         f"format: {capture_diagnostics['sample_rate'] or 'unknown'} Hz / "
         f"{capture_diagnostics['channels'] or 'unknown'} channel(s) · "
-        f"transcription queue: {transcriber.audio_queue_size if transcriber else 0}"
+        f"transcription queue: {transcription_queue_size}"
     )
 
     points = capture.amplitude_points_snapshot()
