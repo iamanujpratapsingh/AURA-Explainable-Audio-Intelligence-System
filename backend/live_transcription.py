@@ -197,6 +197,12 @@ class LiveTranscriptionService:
             message = str(exc).replace(os.getenv("GEMINI_API_KEY", "\0"), "[redacted]").strip()
             if not message and isinstance(exc, TimeoutError):
                 message = "Live transcription request timed out."
+            if "1008" in message or "policy violation" in message.casefold():
+                message = (
+                    f"{message} Gemini Live rejected the session. "
+                    "Verify the configured live model is available for this API key "
+                    "and that the Live API is enabled."
+                )
             with self._lock:
                 self._status = "error"
                 self._error = f"{type(exc).__name__}: {message or 'Live transcription connection failed.'}"

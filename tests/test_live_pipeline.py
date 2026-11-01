@@ -72,6 +72,14 @@ class LiveTranscriptProcessorTests(unittest.TestCase):
         result = processor.process(self.make_event("The weather is clear", 30))
         self.assertEqual(result["detections"], [])
         self.assertEqual(result["segment"]["text"], "The weather is clear")
+        self.assertEqual(result["segment"]["analysis_status"], "no_configured_match")
+        self.assertIn("no phrase match", result["segment"]["analysis_explanation"])
+
+    def test_finalized_phrase_reports_analysis_result(self):
+        processor = LiveTranscriptProcessor(self.matcher)
+        result = processor.process(self.make_event("Please help!", 31))
+        self.assertEqual(result["segment"]["analysis_status"], "matched_configured_phrase")
+        self.assertEqual(result["segment"]["matched_detection_count"], 1)
 
     def test_finalized_segments_keep_chronological_timestamps(self):
         processor = LiveTranscriptProcessor(self.matcher)

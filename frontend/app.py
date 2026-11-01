@@ -294,7 +294,28 @@ def render_live_microphone():
         media_toggle_controls=False,
         audio_receiver_size=64,
     )
-    capture_diagnostics = capture.diagnostics_snapshot()
+    capture_diagnostics = {
+        "frame_count": 0,
+        "processed_frame_count": 0,
+        "last_frame_monotonic": None,
+        "sample_rate": None,
+        "channels": None,
+        "format": None,
+        "layout": None,
+        "samples": 0,
+        "frame_duration_ms": 0.0,
+        "last_frame_duration_ms": 0.0,
+        "rms": 0.0,
+        "callback_error": "",
+        "callback_error_count": 0,
+        "callback_count": 0,
+        "array_shape": None,
+        "array_dtype": None,
+        "minimum": 0.0,
+        "maximum": 0.0,
+        "mean": 0.0,
+        **capture.diagnostics_snapshot(),
+    }
     if transcriber:
         transcription_queue_size = getattr(transcriber, "audio_queue_size", None)
         if transcription_queue_size is None:
@@ -555,6 +576,10 @@ def render_live_microphone():
                 f"**~{format_timestamp(segment.get('start'))}** · "
                 f"{highlighted_evidence(segment.get('text', ''), related)}",
                 unsafe_allow_html=True,
+            )
+            st.caption(
+                f"Analysis: {segment.get('analysis_explanation', 'Not analyzed')} · "
+                f"Source: {segment.get('analysis_source', 'Not available')}"
             )
             if not related:
                 st.caption("No matching dataset entry found.")

@@ -70,6 +70,23 @@ class LiveTranscriptProcessor:
         matches = self.matcher.match_segments(current_segments) if self.matcher else []
         matched_monotonic = time.monotonic()
         detections = [item for item in matches if item.get("segment_index") == current_index]
+        if detections:
+            analysis_status = "matched_configured_phrase"
+            analysis_explanation = "A configured knowledge-base phrase matched this finalized transcript segment."
+        else:
+            analysis_status = "no_configured_match"
+            analysis_explanation = (
+                "The finalized transcript segment was analyzed against the configured knowledge base; "
+                "no phrase match was found."
+            )
+        segment.update(
+            {
+                "analysis_status": analysis_status,
+                "analysis_explanation": analysis_explanation,
+                "analysis_source": "configured knowledge matcher",
+                "matched_detection_count": len(detections),
+            }
+        )
 
         capture_to_recognition_ms = self.elapsed_ms(captured_monotonic, recognized_monotonic)
         recognition_to_match_ms = self.elapsed_ms(recognized_monotonic, matched_monotonic)
