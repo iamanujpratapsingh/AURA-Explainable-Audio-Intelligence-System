@@ -24,6 +24,7 @@ try:
     from backend.evaluation import evaluate_matcher, load_evaluation_dataset
     from backend.live_pipeline import LiveTranscriptProcessor, monitoring_state
     from backend.live_transcription import LiveTranscriptionService
+    from backend.webrtc_config import build_rtc_configuration
     from frontend.audio_visualization import render_audio_visualization
     from frontend.live_audio import LiveAudioCapture, process_audio_frame
     from streamlit_webrtc import WebRtcMode, webrtc_streamer
@@ -278,6 +279,7 @@ def consume_live_transcription_events(transcriber):
 def render_live_microphone():
     capture = st.session_state.live_capture
     transcriber = st.session_state.live_transcriber
+    rtc_configuration = build_rtc_configuration(st.secrets)
     context = webrtc_streamer(
         key=f"aura-live-microphone-{st.session_state.live_stream_generation}",
         mode=WebRtcMode.SENDONLY,
@@ -285,7 +287,7 @@ def render_live_microphone():
             st.session_state.monitoring_active and not st.session_state.monitoring_paused
         ),
         media_stream_constraints={"audio": True, "video": False},
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        rtc_configuration=rtc_configuration,
         audio_frame_callback=lambda frame: process_audio_frame(frame, capture),
         sendback_audio=False,
         sendback_video=False,
