@@ -1,0 +1,68 @@
+{
+  "matching": {
+    "fuzzy_threshold": 0.88,
+    "semantic_matching": false
+  },
+  "rules": [
+    {
+      "event_id": "assistance_request",
+      "event_name": "Possible assistance request",
+      "trigger_phrases": ["help me", "please help", "emergency"],
+      "phrase_variants": ["मदद करो", "कृपया मदद करें", "आपातकाल"],
+      "language": "English, Hindi",
+      "category": "assistance_request",
+      "event_type": "spoken_phrase",
+      "priority": "HIGH",
+      "explanation_template": "The transcript contains the configured phrase '{phrase}' at {timestamp}.",
+      "recommended_action": "Check in with the speaker; do not infer the cause or urgency from this phrase alone.",
+      "evidence_requirements": ["Timestamped transcript evidence", "Human verification of context"],
+      "source_reference": "AURA local example rule; not an external safety standard",
+      "requires_human_verification": true,
+      "negative_phrases": ["no help needed", "don't need help", "do not need help", "मदद की जरूरत नहीं"],
+      "context_exclusions": ["help me with my homework", "help me understand", "help me carry"],
+      "ambiguity_phrases": ["in a movie", "in the movie", "movie scene", "film scene", "song lyrics"]
+    },
+    {
+      "event_id": "hazard_report",
+      "event_name": "Possible fire or smoke report",
+      "trigger_phrases": ["fire detected", "there is a fire", "there is smoke", "fire", "smoke"],
+      "phrase_variants": ["आग लगी है", "आग लग गई", "धुआँ है"],
+      "language": "English, Hindi",
+      "category": "hazard_report",
+      "event_type": "spoken_phrase",
+      "priority": "HIGH",
+      "explanation_template": "The transcript contains the configured phrase '{phrase}' at {timestamp}; this is a report, not confirmation of a hazard.",
+      "recommended_action": "Verify the report with an authorized human and independent evidence.",
+      "evidence_requirements": ["Timestamped transcript evidence", "Independent confirmation required"],
+      "source_reference": "AURA local example rule; not an external safety standard",
+      "requires_human_verification": true,
+      "negative_phrases": ["no fire", "there is no fire", "no smoke", "there is no smoke", "नहीं लगी आग", "धुआँ नहीं है"],
+      "context_exclusions": ["fire extinguisher instructions", "smoke detector instructions"],
+      "ambiguity_phrases": ["in a movie", "in the movie", "movie scene", "film scene", "song lyrics", "fictional scene", "fire drill"]
+    },
+    {
+      "event_id": "machine_stop_request",
+      "event_name": "Possible machine stop request",
+      "trigger_phrases": ["stop the machine"],
+      "phrase_variants": ["मशीन बंद करो", "मशीन रोक दो"],
+      "language": "English, Hindi",
+      "category": "operational_request",
+      "event_type": "spoken_phrase",
+      "priority": "MEDIUM",
+      "explanation_template": "The transcript contains the configured phrase '{phrase}' at {timestamp}.",
+      "recommended_action": "Have an authorized operator verify the request and surrounding context.",
+      "evidence_requirements": ["Timestamped transcript evidence", "Operator confirmation"],
+      "source_reference": "AURA local example rule; not an external safety standard",
+      "requires_human_verification": true,
+      "negative_phrases": ["don't stop the machine", "do not stop the machine"],
+      "context_exclusions": [],
+      "ambiguity_phrases": ["in a movie", "in the movie", "movie scene", "film scene", "song lyrics"]
+    }
+  ],
+  "sample_scenarios": [
+    {"transcript": "The weather is nice today.", "expected": "No configured event"},
+    {"transcript": "There is no fire.", "expected": "Negated hazard report; no alert"},
+    {"transcript": "A fire scene in a movie.", "expected": "Needs verification; no positive hazard alert"},
+    {"transcript": "मदद करो", "expected": "Possible assistance request; human verification required"}
+  ]
+}

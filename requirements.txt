@@ -9,3 +9,4 @@ streamlit-lottie
 gTTS
 google-genai
 python-dotenv
+streamlit-webrtc>=0.79,<0.80

@@ -1,6 +1,6 @@
 # 🎙️ AURA: Explainable Audio Intelligence System
 
-**AURA** (Audio Understanding & Reasoning Agent) is a cloud-native audio forensics dashboard powered by Google Gemini. It transforms raw audio files into actionable intelligence — generating transcripts, detecting granular emotions, identifying key sound events, and delivering vocal executive summaries in seconds.
+**AURA** (Audio Understanding & Reasoning Agent) is a human-reviewed audio analysis dashboard powered by Google Gemini. It analyzes complete audio files, applies a separate configurable phrase-rule dataset to timestamped transcripts, and presents evidence-linked results. Phrase reports are not verified real-world events.
 
 **Functional TRL-4 Prototype.**
 
@@ -15,6 +15,11 @@
 - **Vocal Summaries:** Uses **gTTS** to read the executive summary aloud.
 - **Interactive Timeline:** Color-coded Plotly visualization of the conversation flow.
 - **Forensic QnA:** "Ask AURA" — chat with your audio using Gemini, with timestamp-aware answers.
+- **Configurable phrase rules:** exact English/Hindi variants, negation/context checks, optional fuzzy matching, duplicate handling, and rule-backed explanations.
+- **Waveform and event navigation:** browser-decoded amplitude waveform, playback position, and timestamped phrase markers.
+- **Live microphone monitor:** WebRTC capture with a rolling RMS chart, incremental Gemini Live transcription, and local phrase matching. Gemini full-recording analysis remains a separate, explicit action after Stop.
+- **Review alerts:** actual rule detections create an acknowledgeable, time-limited indicator and session history; uncertain contexts are labeled for verification.
+- **Labeled matcher evaluation:** local precision, recall, F1, false-positive/missed-event rates, and measured matcher-only latency.
 
 ---
 
@@ -25,7 +30,7 @@
 | Frontend | Streamlit |
 | AI Core | Google Generative AI (Gemini) |
 | Voice | gTTS (Google Text-to-Speech) |
-| Visualization | Plotly (Timeline) |
+| Visualization | Plotly, browser Web Audio API, WebRTC |
 | Data | Pandas |
 | Config | python-dotenv |
 
@@ -35,7 +40,7 @@
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - A **Google Gemini API Key** — get one free from [Google AI Studio](https://aistudio.google.com/)
 
 ### Step 1: Clone or Download
@@ -71,11 +76,19 @@ Create a `.env` file in the project root:
 
 ```env
 GEMINI_API_KEY=your_actual_api_key_here
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-3.6-flash
+AURA_LIVE_TRANSCRIBE_MODEL=gemini-3.5-transcribe-live
+AURA_FUZZY_MATCHING=false
+AURA_MAX_AUDIO_MB=50
+AURA_ALERT_INTERVAL_SECONDS=15
+AURA_PROVIDER_RETRIES=2
 ```
 
 > ⚠️ **Never commit `.env` to GitHub.** It is already listed in `.gitignore`.
 > A safe template is provided in `.env.example`.
+
+Temporary Gemini capacity responses are retried twice by default. Set
+`AURA_PROVIDER_RETRIES=0` to disable retries.
 
 ---
 
@@ -92,6 +105,32 @@ The application will automatically:
 
 No API key entry is required in the UI.
 
+For Windows Command Prompt (CMD), use these exact commands:
+
+```cmd
+py -3.11 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+copy .env.example .env
+notepad .env
+.venv\Scripts\python.exe -m streamlit run frontend\app.py
+```
+
+Set `GEMINI_API_KEY` in `.env` before starting the app. Keep the CMD window open
+while using the dashboard.
+
+For Windows PowerShell, the commands can be run as follows:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+notepad .env
+python -m streamlit run frontend/app.py
+```
+
+Use a supported Python version (3.10 or newer). If PowerShell blocks environment activation, either use `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` for that terminal or run `.venv\Scripts\python.exe -m pip install -r requirements.txt` and `.venv\Scripts\python.exe -m streamlit run frontend/app.py` directly. `GEMINI_API_KEY` is used only by the backend and is never placed in browser JavaScript.
+
 ---
 
 ## 🔍 Verify Gemini Connection
@@ -105,8 +144,8 @@ python check_models.py
 Expected output:
 ```
 --- 🔍 Checking Gemini Configuration ---
-Configured model: gemini-2.0-flash
-✅ Model 'gemini-2.0-flash' is reachable. Response: OK
+Configured model: <value of GEMINI_MODEL>
+✅ The model configured by `GEMINI_MODEL` is reachable. Response: OK
 ```
 
 ---
@@ -116,9 +155,27 @@ Configured model: gemini-2.0-flash
 ```
 AURA-Explainable-Audio-Intelligence-System/
 ├── backend/
-│   └── aura_engine.py       # Core logic (Gemini, gTTS, KnowledgeBase)
+│   ├── alert_state.py       # Alert acknowledgment and expiration
+│   ├── aura_engine.py       # Gemini analysis, validation, existing KnowledgeBase
+│   ├── evaluation.py        # Labeled matcher metrics and measured latency
+│   ├── knowledge_matcher.py # Dataset validation and deterministic matching
+│   ├── live_pipeline.py     # Final transcript processing and local matching
+│   └── live_transcription.py # Bounded asynchronous Gemini Live worker
 ├── frontend/
-│   └── app.py               # Streamlit UI
+│   ├── app.py               # Streamlit dashboard, analysis, alerts, history
+│   ├── audio_visualization.py # Recording waveform and marker navigation
+│   └── live_audio.py        # Bounded real-time PCM capture and amplitude
+├── training/
+│   ├── alert_rules.json     # Configurable phrase rules and examples
+│   └── evaluation_cases.json # Separate labeled evaluation corpus
+├── tests/
+│   ├── test_alert_state.py
+│   ├── test_audio_validation.py
+│   ├── test_evaluation.py
+│   ├── test_knowledge_matcher.py
+│   ├── test_live_audio.py
+│   ├── test_live_pipeline.py
+│   └── test_live_transcription.py
 ├── training/
 │   └── knowledge_base.json  # Feedback/memory store
 ├── .env                     # ⚠️ Local only — not committed
@@ -131,31 +188,92 @@ AURA-Explainable-Audio-Intelligence-System/
 
 ---
 
-## 🔄 Application Workflow
+## Architecture
 
+```mermaid
+flowchart TD
+    A[Upload WAV MP3 M4A or browser microphone] --> B{Input path}
+    B -->|File or complete clip| C[Validate size format and audio structure]
+    B -->|Live Monitor| D[WebRTC microphone frames]
+    D --> E[Local rolling RMS amplitude and bounded PCM buffer]
+    E -->|Audio stream| F[Gemini Live transcription]
+    F --> G[Local JSON phrase matching]
+    I[alert_rules.json] --> G
+    G --> H[Rule alert or Needs verification]
+    H --> J[Transcript highlight timeline and event history]
+    E -->|Stop then explicit Analyze| C
+    C -->|Explicit user action| K[Whole-recording Gemini analysis]
+    L[evaluation_cases.json] --> M[Measured matcher metrics]
+    G --> M
+    J --> N[Human review]
+    K --> N
 ```
-.env (GEMINI_API_KEY + GEMINI_MODEL)
-    ↓
-AuraEngine initializes Gemini
-    ↓
-User uploads or records audio
-    ↓
-Click "Analyze Audio"
-    ↓
-Audio uploaded to Google AI Studio
-    ↓
-Gemini returns: Transcript + Emotion + Event + Summary
-    ↓
-Live Timeline  |  Transcript Data Grid  |  Ask AURA (QnA)
-    ↓
-gTTS reads the executive summary aloud
+
+Audio uploaded for file analysis is sent to the configured Google Gemini API. When Live Monitor is started and microphone permission is granted, audio is streamed to Gemini Live for transcription; local phrase matching and the amplitude graph run separately. The complete buffered recording is sent for whole-recording Gemini analysis only after Stop and the explicit Analyze captured audio action. Temporary analysis files are removed by default. Local browser playback and waveform decoding do not create a spectrogram.
+
+## Audio monitoring and sound events
+
+- **File analysis:** WAV, MP3, and M4A, capped at 50 MB by default. Empty, malformed WAV, unsupported formats, and invalid container signatures are rejected before the provider request.
+- **Live microphone:** choose **Live Monitor**, grant browser microphone access, and use **Start Monitoring** / **Stop Monitoring**. The graph independently updates rolling RMS amplitude (not a spectrogram) while Gemini Live provides interim and finalized transcript text. Finalized phrases are matched locally against `training/alert_rules.json`; rule alerts do not establish that a real-world event occurred. Captures are resampled to mono 16 kHz PCM and limited to three minutes in memory. Stop requests are nonblocking; the recording is finalized after WebRTC and transcription shut down. Select **Analyze captured audio** after stopping for optional whole-recording Gemini analysis.
+- **Live transcript timing:** the Live API does not provide word-level timestamps here. Displayed positions are approximate capture-stream positions, and measured capture-to-dashboard latency is based on server-side monotonic timestamps; it does not measure browser paint or end-user display latency. Provider and network delays vary, so no fixed live latency is guaranteed.
+- **Startup/device errors:** the monitor reports Idle, Processing, Listening, or Error. If no audio frames arrive within 15 seconds after starting, it stops capture and reports a permission/device/network troubleshooting message rather than claiming that monitoring is active.
+- **Provider failures:** Live transcription uses a 20-second connection timeout and a 10-second audio-send timeout. Errors are surfaced in the monitor; no transcript or alert is invented when the provider fails.
+- **Network/permissions:** microphone access requires a secure browser context (localhost is allowed; remote access requires HTTPS). WebRTC may also require STUN/TURN connectivity. A failed connection is reported in the interface; no audio is silently treated as analyzed.
+- **Pause and resume:** in **Live Monitor**, select **Start Monitoring**, grant
+  microphone permission, and use **Pause Monitoring** to stop accepting new
+  microphone frames without ending the transcription session. Select **Resume
+  Monitoring** to continue; **Stop Monitoring** ends the session and finalizes
+  the buffered recording.
+- **Sound classification:** this repository does not include a dedicated alarm, siren, glass, dog, or background-noise classifier. Gemini may return model-reported important sounds for a complete recording, but these are not independent classifier results. No sound-class labels are fabricated.
+
+## Phrase rules and explanation
+
+Edit `training/alert_rules.json` to configure rule IDs, phrases, variants, language, category, event type, priority, explanations, recommended review actions, evidence requirements, exclusions, ambiguity phrases, and human-verification requirements. Dataset fields, duplicate IDs, priorities, and matching thresholds are validated at startup. The existing `KnowledgeBase` remains a separate feedback store.
+
+Exact matching is enabled by default and respects phrase boundaries. Negation and context checks consider the matched transcript segment and up to three preceding segments. Fuzzy matching is disabled by default; enable it with `AURA_FUZZY_MATCHING=true`. Its similarity score describes text similarity only, not event confidence. Semantic matching is not implemented. Review-only ambiguous mentions (for example a fire scene in a movie) appear as **Needs verification** and do not activate the alert indicator. Configured priorities are review labels, not proof of severity or hazard.
+
+The blink indicator is driven by new non-ambiguous rule detections, stops when acknowledged or after `AURA_ALERT_INTERVAL_SECONDS`, and remains in session history. Rules requiring human verification still require reviewer confirmation. Transcript timestamps and original evidence are shown with the matched JSON record and recommended review action.
+
+Each live rule match is available immediately from local transcript matching and is labeled as transcript evidence, not a verified real-world event. Optional contextual audio analysis is a separate user action after stopping; it never delays or upgrades the initial rule alert to a verified incident.
+
+## Tests and evaluation
+
+From the repository root, run:
+
+```powershell
+python -m unittest discover -s tests -v
 ```
+
+The dashboard evaluation view runs the separate `training/evaluation_cases.json` labeled set and calculates precision, recall, F1, false-positive rate, missed-event rate, and measured matcher latency per case. These metrics describe only this small local rule-matching set; latency excludes Gemini, network, audio capture, and transcription, and the results are not a production guarantee. Add reviewed examples to the evaluation file without using live output as its own ground truth.
+
+The automated suite uses mocked Gemini/WebRTC inputs. It does not substitute for granting browser microphone permission and testing a real device, network, and Gemini API account end to end.
+
+To manually test live transcription, start the app with the CMD commands above,
+choose **Live Monitor**, grant microphone permission, and speak a configured
+phrase such as “Please help” followed by ordinary speech. Confirm that interim
+text changes while speaking, the finalized line appears once with an
+approximate timestamp, and the matching explanation is shown without claiming
+that an incident occurred. Test **Pause Monitoring**, speak while paused,
+resume, and then use **Stop Monitoring**. The browser microphone, network, and
+Gemini account must be working for this manual test; the repository's automated
+tests only validate the mocked incremental path.
+
+## Demonstration
+
+1. Start the app and choose **Upload File** with an authorized WAV, MP3, or M4A recording, or choose **Live Monitor** and grant microphone access.
+2. While monitoring, review the rolling amplitude graph and incremental transcript. Configured phrase matches are rule-based review alerts, not verified incidents.
+3. Stop monitoring to finalize the buffered recording. Whole-recording Gemini analysis is optional and requires the separate **Analyze captured audio** action.
+4. Review the amplitude waveform and playback, then select timestamped markers and inspect highlighted transcript evidence.
+5. Inspect the configured rule record, match type, priority, explanation, review action, and **Needs verification** status where applicable.
+6. Acknowledge a triggered alert and review the session history and labeled evaluation metrics.
+
+Do not treat a spoken phrase or model-reported sound as proof of a real-world event. Human verification and independent evidence remain necessary.
 
 ---
 
 ## 🔮 Future Roadmap
 
-- **Real-time WebSocket Streaming** — live call center analysis
+- **Remote deployment hardening** — configurable TURN infrastructure and browser/device integration tests
 - **Speaker Identification** — voice fingerprinting
 - **PDF Reports** — auto-generated forensic evidence reports
 

@@ -1,0 +1,18 @@
+{
+  "dataset_name": "AURA phrase matcher review set",
+  "dataset_version": 1,
+  "cases": [
+    {"case_id": "assist-001", "transcript": "Please help!", "expected_event_ids": ["assistance_request"]},
+    {"case_id": "assist-002", "transcript": "मदद करो", "expected_event_ids": ["assistance_request"]},
+    {"case_id": "assist-003", "transcript": "Could you help me with my homework?", "expected_event_ids": []},
+    {"case_id": "assist-004", "transcript": "The helper arrived early.", "expected_event_ids": []},
+    {"case_id": "hazard-001", "transcript": "There is smoke in the room.", "expected_event_ids": ["hazard_report"]},
+    {"case_id": "hazard-002", "transcript": "There is no fire.", "expected_event_ids": []},
+    {"case_id": "hazard-003", "transcript": "A fire scene in a movie.", "expected_event_ids": []},
+    {"case_id": "hazard-004", "transcript": "आग लगी है।", "expected_event_ids": ["hazard_report"]},
+    {"case_id": "machine-001", "transcript": "Stop the machine now.", "expected_event_ids": ["machine_stop_request"]},
+    {"case_id": "machine-002", "transcript": "Do not stop the machine.", "expected_event_ids": []},
+    {"case_id": "ordinary-001", "transcript": "The train arrives at noon.", "expected_event_ids": []},
+    {"case_id": "ordinary-002", "transcript": "Please open the window.", "expected_event_ids": []}
+  ]
+}

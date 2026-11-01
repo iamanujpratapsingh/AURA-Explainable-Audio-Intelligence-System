@@ -3,13 +3,16 @@ import json
 import time
 import uuid
 import hashlib
+import io
 import wave
 from datetime import datetime, timezone
+from pathlib import Path
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from gtts import gTTS
+from backend.knowledge_matcher import KnowledgeMatcher, load_dataset
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -17,6 +20,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 PRIORITY_LEVELS = {"LOW", "MEDIUM", "HIGH"}
+TRANSIENT_PROVIDER_CODES = {"429", "500", "502", "503", "504"}
 
 
 def _as_string_list(value):
@@ -98,6 +102,16 @@ class AuraEngine:
         self._gemini_ready = False
         self._init_error = None
         self._client = None
+        self._live_client = None
+        dataset_path = Path(__file__).resolve().parents[1] / "training" / "alert_rules.json"
+        self.rule_matcher = None
+        self.dataset_error = None
+        try:
+            dataset = load_dataset(dataset_path)
+            fuzzy_enabled = os.getenv("AURA_FUZZY_MATCHING", "false").strip().lower() in {"1", "true", "yes"}
+            self.rule_matcher = KnowledgeMatcher(dataset, fuzzy_enabled=fuzzy_enabled)
+        except (OSError, ValueError) as exc:
+            self.dataset_error = str(exc)
 
         if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
             self._init_error = "Gemini configuration missing. Please add GEMINI_API_KEY to your .env file."
@@ -105,6 +119,10 @@ class AuraEngine:
 
         try:
             self._client = genai.Client(api_key=GEMINI_API_KEY)
+            self._live_client = genai.Client(
+                api_key=GEMINI_API_KEY,
+                http_options=types.HttpOptions(timeout=20_000),
+            )
             self._gemini_ready = True
         except Exception as e:
             self._init_error = f"Gemini initialization failed: {e}"
@@ -118,6 +136,87 @@ class AuraEngine:
         if self._gemini_ready:
             return f"Connected - {self.model_name}"
         return self._init_error or "Configuration error."
+
+    @property
+    def live_client(self):
+        return self._live_client if self._gemini_ready else None
+
+    def match_transcript(self, transcript):
+        if self.rule_matcher is None:
+            return []
+        return self.rule_matcher.match_segments(transcript)
+
+    @staticmethod
+    def _is_transient_provider_error(error):
+        code = getattr(error, "code", None)
+        if callable(code):
+            code = code()
+        if str(code) in TRANSIENT_PROVIDER_CODES:
+            return True
+        message = str(error).upper()
+        return any(
+            marker in message
+            for marker in (
+                "429",
+                "500 INTERNAL",
+                "502 BAD GATEWAY",
+                "503 UNAVAILABLE",
+                "504 GATEWAY",
+                "RESOURCE_EXHAUSTED",
+                "HIGH DEMAND",
+                "TEMPORAR",
+            )
+        )
+
+    def _generate_content_with_retry(self, **kwargs):
+        try:
+            retry_count = max(0, int(os.getenv("AURA_PROVIDER_RETRIES", "2")))
+        except ValueError:
+            retry_count = 2
+
+        for attempt in range(retry_count + 1):
+            try:
+                return self._client.models.generate_content(**kwargs)
+            except Exception as exc:
+                if attempt >= retry_count or not self._is_transient_provider_error(exc):
+                    raise
+                time.sleep(min(2 ** attempt, 8))
+
+    @staticmethod
+    def _read_validated_audio(audio_path):
+        extension = os.path.splitext(audio_path)[-1].lower()
+        mime_map = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4"}
+        if extension not in mime_map:
+            raise ValueError("Unsupported audio format. Use WAV, MP3, or M4A.")
+        try:
+            with open(audio_path, "rb") as audio_file:
+                audio_bytes = audio_file.read()
+        except OSError as exc:
+            raise ValueError(f"Could not read audio file: {exc}") from exc
+        if not audio_bytes:
+            raise ValueError("Audio file is empty.")
+        maximum_bytes = int(float(os.getenv("AURA_MAX_AUDIO_MB", "50")) * 1024 * 1024)
+        if maximum_bytes <= 0 or len(audio_bytes) > maximum_bytes:
+            raise ValueError(f"Audio file exceeds the configured {maximum_bytes // (1024 * 1024)} MB limit.")
+
+        if extension == ".wav":
+            try:
+                with wave.open(io.BytesIO(audio_bytes), "rb") as wav_file:
+                    if wav_file.getnframes() <= 0 or wav_file.getframerate() <= 0:
+                        raise ValueError("WAV file contains no audio frames.")
+            except (wave.Error, EOFError) as exc:
+                raise ValueError("WAV file is malformed or incomplete.") from exc
+        elif extension == ".m4a" and b"ftyp" not in audio_bytes[:16]:
+            raise ValueError("M4A file does not contain a valid MP4 audio header.")
+        elif extension == ".mp3":
+            has_id3 = audio_bytes.startswith(b"ID3")
+            has_frame_sync = any(
+                audio_bytes[index] == 0xFF and audio_bytes[index + 1] & 0xE0 == 0xE0
+                for index in range(min(len(audio_bytes) - 1, 4096))
+            )
+            if not has_id3 and not has_frame_sync:
+                raise ValueError("MP3 file does not contain a recognized ID3 tag or MPEG audio frame.")
+        return audio_bytes, mime_map[extension]
 
     def generate_audio_response(self, text):
         if not text:
@@ -358,15 +457,9 @@ class AuraEngine:
 
         The default tuple preserves the pre-existing public return contract.
         """
+        audio_bytes, mime_type = self._read_validated_audio(audio_path)
         if not self._gemini_ready:
             raise ValueError(self._init_error or "Gemini is not configured.")
-
-        with open(audio_path, "rb") as audio_file:
-            audio_bytes = audio_file.read()
-
-        ext = os.path.splitext(audio_path)[-1].lower()
-        mime_map = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4"}
-        mime_type = mime_map.get(ext, "audio/mpeg")
 
         prompt = f"""You are AURA, an AI-assisted audio intelligence system. Analyze this audio file.
 The user-selected spoken language is: {language}. Identify languages from the audio where the evidence supports it.
@@ -428,7 +521,7 @@ Confidence is an AI estimate (0-100), not a guarantee. Do not characterize anyon
 dangerous, or responsible for a real-world event."""
 
         try:
-            response = self._client.models.generate_content(
+            response = self._generate_content_with_retry(
                 model=self.model_name,
                 contents=[
                     types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
@@ -440,6 +533,10 @@ dangerous, or responsible for a real-world event."""
             analysis = self._normalise_analysis(self._parse_model_json(response.text))
             if anonymize_speakers:
                 self._anonymize_speakers(analysis)
+            analysis["rule_detections"] = self.match_transcript(analysis["transcript"])
+            analysis["knowledge_dataset_status"] = (
+                "Loaded" if self.rule_matcher is not None else f"Unavailable: {self.dataset_error or 'dataset not loaded'}"
+            )
 
             analysis["analysis_record"] = self._build_analysis_record(
                 audio_path=audio_path,
