@@ -89,6 +89,21 @@ class LiveTranscriptionService:
             return self._dropped_audio_chunks
 
     @property
+    def audio_queue_size(self):
+        return self.audio_queue.qsize()
+
+    @property
+    def diagnostics(self):
+        with self._lock:
+            return {
+                "status": self._status,
+                "audio_queue_size": self.audio_queue.qsize(),
+                "dropped_audio_chunks": self._dropped_audio_chunks,
+                "dropped_events": self._dropped_events,
+                "connected": self._connected_event.is_set(),
+            }
+
+    @property
     def connected(self):
         return self._connected_event.is_set() and self.status == "connected"
 

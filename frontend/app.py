@@ -7,6 +7,7 @@ import sys
 import hashlib
 import json
 import html as html_lib
+import logging
 import re
 import time
 import pandas as pd
@@ -15,6 +16,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 MAX_SESSION_EVENT_HISTORY = 500
+logger = logging.getLogger(__name__)
 
 try:
     from backend.alert_state import acknowledge_alert, active_alerts
@@ -289,6 +291,25 @@ def render_live_microphone():
         media_toggle_controls=False,
         audio_receiver_size=64,
     )
+    capture_diagnostics = capture.diagnostics_snapshot()
+    if context.state.playing and st.session_state.live_monitor_playing_at is None:
+        st.session_state.live_monitor_playing_at = time.monotonic()
+    elif not context.state.playing:
+        st.session_state.live_monitor_playing_at = None
+    logger.info(
+        "Live microphone state: playing=%s signalling=%s frames=%d processed=%d "
+        "last_frame=%s sample_rate=%s channels=%s format=%s transcriber=%s queue=%s",
+        context.state.playing,
+        context.state.signalling,
+        capture_diagnostics["frame_count"],
+        capture_diagnostics["processed_frame_count"],
+        capture_diagnostics["last_frame_monotonic"],
+        capture_diagnostics["sample_rate"],
+        capture_diagnostics["channels"],
+        capture_diagnostics["format"],
+        transcriber.status if transcriber else "unavailable",
+        transcriber.audio_queue_size if transcriber else 0,
+    )
     if context.state.playing:
         if transcriber and transcriber.status == "idle":
             transcriber.start()
@@ -299,6 +320,7 @@ def render_live_microphone():
                 consume_receiver_frames(receiver, capture)
         except Exception as exc:
             detail = str(exc).strip() or repr(exc) or type(exc).__name__
+            logger.exception("Live WebRTC audio receive failed")
             st.session_state.live_monitor_error = f"Audio stream failed ({type(exc).__name__}): {detail}"
             if transcriber:
                 transcriber.request_stop()
@@ -307,12 +329,13 @@ def render_live_microphone():
         st.session_state.monitoring_active
         and not st.session_state.monitoring_paused
         and not capture.duration_seconds
-        and st.session_state.live_monitor_started_at
-        and time.monotonic() - st.session_state.live_monitor_started_at > 15
+        and context.state.playing
+        and st.session_state.live_monitor_playing_at
+        and time.monotonic() - st.session_state.live_monitor_playing_at > 30
     ):
         st.session_state.live_monitor_error = (
-            "No microphone audio was received. Check browser microphone permission, device availability, "
-            "HTTPS/localhost, and WebRTC connectivity."
+            "WebRTC is connected but no audio frames were received for 30 seconds. "
+            "Check browser microphone permission and selected input device."
         )
         st.session_state.monitoring_active = False
         if transcriber:
@@ -363,6 +386,15 @@ def render_live_microphone():
         st.warning("Live transcription is unavailable; local amplitude capture is still active.")
     if st.session_state.get("live_transcription_error"):
         st.warning(f"Live transcription error: {st.session_state.live_transcription_error}")
+    st.caption(
+        f"WebRTC: {'playing' if context.state.playing else 'waiting'} · "
+        f"{'signalling' if context.state.signalling else 'signalling complete'} · "
+        f"frames received: {capture_diagnostics['frame_count']} · "
+        f"last frame: {capture_diagnostics['last_frame_monotonic'] or 'none'} · "
+        f"format: {capture_diagnostics['sample_rate'] or 'unknown'} Hz / "
+        f"{capture_diagnostics['channels'] or 'unknown'} channel(s) · "
+        f"transcription queue: {transcriber.audio_queue_size if transcriber else 0}"
+    )
 
     points = capture.amplitude_points_snapshot()
     if points:
@@ -494,6 +526,7 @@ for key, default in [("processed", False), ("chat_history", []), ("alert_history
                       ("live_capture", None), ("live_recording_bytes", b""),
                       ("live_monitor_error", ""), ("live_stream_generation", 0),
                       ("live_monitor_started_at", None),
+                      ("live_monitor_playing_at", None),
                       ("live_monitor_started", False),
                       ("live_transcriber", None), ("live_transcription_status", "idle"),
                       ("live_transcription_error", ""),
@@ -707,6 +740,7 @@ elif mode == "🎙️ Live Monitor":
         st.session_state.live_latency_history = []
         st.session_state.live_stream_generation += 1
         st.session_state.live_monitor_started_at = time.monotonic()
+        st.session_state.live_monitor_playing_at = None
         st.session_state.monitoring_active = True
         st.session_state.live_monitor_started = True
         st.rerun()

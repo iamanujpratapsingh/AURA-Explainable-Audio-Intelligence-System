@@ -1,4 +1,5 @@
 import io
+import logging
 import queue
 import threading
 import time
@@ -9,11 +10,15 @@ import av
 import numpy as np
 
 
+logger = logging.getLogger(__name__)
+
+
 def consume_receiver_frames(receiver, capture):
     try:
         frames = receiver.get_frames(block=False)
     except queue.Empty:
         return 0
+    logger.debug("WebRTC receiver returned %d audio frame(s)", len(frames))
     for frame in frames:
         capture.add_frame(frame)
     return len(frames)
@@ -33,6 +38,12 @@ class LiveAudioCapture:
         self.limit_reached = False
         self.pcm_sink = pcm_sink
         self.paused = False
+        self.frame_count = 0
+        self.last_frame_monotonic = None
+        self.last_frame_sample_rate = None
+        self.last_frame_channels = None
+        self.last_frame_format = None
+        self.processed_frame_count = 0
         self.lock = threading.Lock()
 
     def pause(self):
@@ -44,7 +55,24 @@ class LiveAudioCapture:
             self.paused = False
 
     def add_frame(self, frame):
-        if not frame.sample_rate or not frame.layout.channels:
+        frame_received_at = time.monotonic()
+        sample_rate = getattr(frame, "sample_rate", None)
+        layout = getattr(frame, "layout", None)
+        channels = len(layout.channels) if layout and layout.channels else 0
+        frame_format = str(getattr(frame, "format", "") or "")
+        with self.lock:
+            self.frame_count += 1
+            self.last_frame_monotonic = frame_received_at
+            self.last_frame_sample_rate = sample_rate
+            self.last_frame_channels = channels
+            self.last_frame_format = frame_format
+        if not sample_rate or not channels:
+            logger.warning(
+                "Received invalid WebRTC audio frame: sample_rate=%r channels=%r format=%r",
+                sample_rate,
+                channels,
+                frame_format,
+            )
             return False
         emitted_chunks = []
         with self.lock:
@@ -72,12 +100,26 @@ class LiveAudioCapture:
                 self.amplitudes.append(amplitude)
                 self.amplitude_points.append((capture_seconds, amplitude))
                 emitted_chunks.append((pcm_bytes, capture_seconds, time.monotonic()))
+                self.processed_frame_count += 1
             pcm_sink = self.pcm_sink
 
         if pcm_sink is not None:
             for pcm_bytes, captured_seconds, captured_monotonic in emitted_chunks:
                 pcm_sink(pcm_bytes, captured_seconds, captured_monotonic)
         return bool(emitted_chunks)
+
+    def diagnostics_snapshot(self):
+        with self.lock:
+            bytes_per_second = (self.sample_rate or 0) * (self.channels or 0) * 2
+            return {
+                "frame_count": self.frame_count,
+                "processed_frame_count": self.processed_frame_count,
+                "last_frame_monotonic": self.last_frame_monotonic,
+                "sample_rate": self.last_frame_sample_rate,
+                "channels": self.last_frame_channels,
+                "format": self.last_frame_format,
+                "duration_seconds": self.total_bytes / bytes_per_second if bytes_per_second else 0.0,
+            }
 
     def amplitude_snapshot(self):
         with self.lock:

@@ -64,6 +64,16 @@ class LiveAudioCaptureTests(unittest.TestCase):
         self.assertTrue(capture.add_frame(self.make_frame()))
         self.assertEqual(len(sent), 1)
 
+    def test_capture_diagnostics_report_received_frame_format(self):
+        capture = LiveAudioCapture()
+        capture.add_frame(self.make_frame())
+        diagnostics = capture.diagnostics_snapshot()
+        self.assertEqual(diagnostics["frame_count"], 1)
+        self.assertEqual(diagnostics["processed_frame_count"], 1)
+        self.assertEqual(diagnostics["sample_rate"], 16000)
+        self.assertEqual(diagnostics["channels"], 1)
+        self.assertIsNotNone(diagnostics["last_frame_monotonic"])
+
     def test_empty_nonblocking_receiver_poll_is_not_a_stream_failure(self):
         receiver = Mock()
         receiver.get_frames.side_effect = queue.Empty
