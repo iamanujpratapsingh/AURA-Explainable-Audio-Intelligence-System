@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import av
 
-from frontend.live_audio import LiveAudioCapture, consume_receiver_frames
+from frontend.live_audio import LiveAudioCapture, consume_receiver_frames, process_audio_frame
 
 
 class LiveAudioCaptureTests(unittest.TestCase):
@@ -73,6 +73,29 @@ class LiveAudioCaptureTests(unittest.TestCase):
         self.assertEqual(diagnostics["sample_rate"], 16000)
         self.assertEqual(diagnostics["channels"], 1)
         self.assertIsNotNone(diagnostics["last_frame_monotonic"])
+
+    def test_audio_callback_returns_frame_and_records_callback_errors(self):
+        capture = LiveAudioCapture()
+        frame = self.make_frame()
+        self.assertIs(process_audio_frame(frame, capture), frame)
+        self.assertEqual(capture.diagnostics_snapshot()["frame_count"], 1)
+
+        invalid = Mock()
+        invalid.sample_rate = 16000
+        invalid.layout.channels = ()
+        self.assertIs(process_audio_frame(invalid, capture), invalid)
+        self.assertEqual(capture.diagnostics_snapshot()["frame_count"], 2)
+
+        class BrokenFrame:
+            @property
+            def sample_rate(self):
+                raise RuntimeError("frame metadata unavailable")
+
+        broken = BrokenFrame()
+        self.assertIs(process_audio_frame(broken, capture), broken)
+        diagnostics = capture.diagnostics_snapshot()
+        self.assertEqual(diagnostics["callback_error_count"], 1)
+        self.assertIn("frame metadata unavailable", diagnostics["callback_error"])
 
     def test_empty_nonblocking_receiver_poll_is_not_a_stream_failure(self):
         receiver = Mock()

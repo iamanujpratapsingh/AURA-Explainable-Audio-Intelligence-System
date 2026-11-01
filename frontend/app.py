@@ -25,7 +25,7 @@ try:
     from backend.live_pipeline import LiveTranscriptProcessor, monitoring_state
     from backend.live_transcription import LiveTranscriptionService
     from frontend.audio_visualization import render_audio_visualization
-    from frontend.live_audio import LiveAudioCapture, consume_receiver_frames
+    from frontend.live_audio import LiveAudioCapture, process_audio_frame
     from streamlit_webrtc import WebRtcMode, webrtc_streamer
 except Exception as e:
     st.error(f"Backend import failed: {e}")
@@ -286,6 +286,7 @@ def render_live_microphone():
         ),
         media_stream_constraints={"audio": True, "video": False},
         rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        audio_frame_callback=lambda frame: process_audio_frame(frame, capture),
         sendback_audio=False,
         sendback_video=False,
         media_toggle_controls=False,
@@ -317,20 +318,14 @@ def render_live_microphone():
         transcriber.status if transcriber else "unavailable",
         transcription_queue_size,
     )
+    if capture_diagnostics["callback_error"]:
+        st.session_state.live_monitor_error = (
+            f"Audio callback failed: {capture_diagnostics['callback_error']}"
+        )
     if context.state.playing:
         if transcriber and transcriber.status == "idle":
             transcriber.start()
             st.session_state.live_transcription_status = "connecting"
-        try:
-            receiver = context.audio_receiver
-            if receiver is not None:
-                consume_receiver_frames(receiver, capture)
-        except Exception as exc:
-            detail = str(exc).strip() or repr(exc) or type(exc).__name__
-            logger.exception("Live WebRTC audio receive failed")
-            st.session_state.live_monitor_error = f"Audio stream failed ({type(exc).__name__}): {detail}"
-            if transcriber:
-                transcriber.request_stop()
 
     if (
         st.session_state.monitoring_active
@@ -402,6 +397,11 @@ def render_live_microphone():
         f"{capture_diagnostics['channels'] or 'unknown'} channel(s) · "
         f"transcription queue: {transcription_queue_size}"
     )
+    if capture_diagnostics["callback_error_count"]:
+        st.error(
+            f"Audio callback errors: {capture_diagnostics['callback_error_count']} · "
+            f"{capture_diagnostics['callback_error']}"
+        )
 
     points = capture.amplitude_points_snapshot()
     if points:

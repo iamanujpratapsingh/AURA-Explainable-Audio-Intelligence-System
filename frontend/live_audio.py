@@ -24,6 +24,16 @@ def consume_receiver_frames(receiver, capture):
     return len(frames)
 
 
+def process_audio_frame(frame, capture):
+    """Process one WebRTC frame in the streamlit-webrtc worker thread."""
+    try:
+        capture.add_frame(frame)
+    except Exception as exc:
+        capture.record_callback_error(exc)
+        logger.exception("WebRTC audio frame callback failed")
+    return frame
+
+
 class LiveAudioCapture:
     def __init__(self, max_duration_seconds=180, max_amplitude_points=120, pcm_sink=None):
         self.max_duration_seconds = max_duration_seconds
@@ -44,6 +54,8 @@ class LiveAudioCapture:
         self.last_frame_channels = None
         self.last_frame_format = None
         self.processed_frame_count = 0
+        self.callback_error = ""
+        self.callback_error_count = 0
         self.lock = threading.Lock()
 
     def pause(self):
@@ -119,7 +131,14 @@ class LiveAudioCapture:
                 "channels": self.last_frame_channels,
                 "format": self.last_frame_format,
                 "duration_seconds": self.total_bytes / bytes_per_second if bytes_per_second else 0.0,
+                "callback_error": self.callback_error,
+                "callback_error_count": self.callback_error_count,
             }
+
+    def record_callback_error(self, error):
+        with self.lock:
+            self.callback_error_count += 1
+            self.callback_error = f"{type(error).__name__}: {error}"
 
     def amplitude_snapshot(self):
         with self.lock:
