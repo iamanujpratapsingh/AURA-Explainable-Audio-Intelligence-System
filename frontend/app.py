@@ -408,6 +408,47 @@ def render_live_microphone():
         f"{capture_diagnostics['channels'] or 'unknown'} channel(s) · "
         f"transcription queue: {transcription_queue_size}"
     )
+    turn_configured = len(rtc_configuration["iceServers"]) > 1
+    callback_active = capture_diagnostics["callback_count"] > 0
+    audio_active = capture_diagnostics["frame_count"] > 0
+    signal_active = audio_active and capture_diagnostics["rms"] > 0
+    transcription_active = bool(
+        transcriber and transcriber_diagnostics.get("status") == "connected"
+    )
+    readiness_checks = [
+        ("Secure browser context", bool(context.state.signalling or context.state.playing),
+         "WebRTC signaling is available" if context.state.signalling or context.state.playing
+         else "Open the HTTPS app directly in Chrome and allow microphone access"),
+        ("STUN server", True, "Configured"),
+        ("TURN relay", turn_configured,
+         "Configured for restricted networks" if turn_configured
+         else "Optional; add TURN secrets for mobile/restricted networks"),
+        ("WebRTC connection", context.state.playing,
+         "Playing" if context.state.playing else "Waiting for browser connection"),
+        ("Audio callback", callback_active,
+         f"{capture_diagnostics['callback_count']} callback(s)" if callback_active
+         else "No callback has executed"),
+        ("Audio frames", audio_active,
+         f"{capture_diagnostics['frame_count']} frame(s)" if audio_active
+         else "No audio frames received"),
+        ("Microphone signal", signal_active,
+         f"RMS {capture_diagnostics['rms']:.4f}" if signal_active
+         else "No non-zero audio signal measured"),
+        ("Transcription session", transcription_active,
+         "Gemini Live connected" if transcription_active
+         else "Waiting for transcription connection"),
+        ("AURA analysis", st.session_state.live_processor is not None,
+         "Ready for finalized transcript segments" if st.session_state.live_processor
+         else "Start monitoring to initialize analysis"),
+    ]
+    st.markdown("#### Live readiness")
+    readiness_columns = st.columns(3)
+    for index, (label, active, detail) in enumerate(readiness_checks):
+        readiness_columns[index % 3].markdown(
+            f"{'✅' if active else '⏳'} **{label}**  \n"
+            f"<small>{detail}</small>",
+            unsafe_allow_html=True,
+        )
     diagnostics_cols = st.columns(4)
     diagnostics_cols[0].metric(
         "Microphone",
