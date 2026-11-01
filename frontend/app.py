@@ -443,10 +443,13 @@ def render_live_microphone():
                 "frame_duration_ms": capture_diagnostics["frame_duration_ms"],
                 "rms_energy": capture_diagnostics["rms"],
                 "audio_queue_size": transcription_queue_size,
-                "submitted_audio_chunks": transcriber_diagnostics["submitted_audio_chunks"],
-                "sent_audio_chunks": transcriber_diagnostics["sent_audio_chunks"],
-                "last_audio_sent_monotonic": transcriber_diagnostics["last_audio_sent_monotonic"],
-                "transcription_status": transcriber_diagnostics["status"],
+                "submitted_audio_chunks": transcriber_diagnostics.get("submitted_audio_chunks", 0),
+                "sent_audio_chunks": transcriber_diagnostics.get("sent_audio_chunks", 0),
+                "last_audio_sent_monotonic": transcriber_diagnostics.get("last_audio_sent_monotonic"),
+                "transcription_status": transcriber_diagnostics.get(
+                    "status",
+                    transcriber.status if transcriber else "unavailable",
+                ),
                 "transcription_queue_status": (
                     "queued_audio" if transcription_queue_size else "empty"
                 ),
