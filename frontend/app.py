@@ -439,6 +439,7 @@ def render_live_microphone():
                 "sample_rate_hz": capture_diagnostics["sample_rate"],
                 "channels": capture_diagnostics["channels"],
                 "format": capture_diagnostics["format"],
+                "layout": capture_diagnostics["layout"],
                 "samples_per_frame": capture_diagnostics["samples"],
                 "frame_duration_ms": capture_diagnostics["frame_duration_ms"],
                 "rms_energy": capture_diagnostics["rms"],
@@ -455,6 +456,12 @@ def render_live_microphone():
                 ),
                 "callback_error": capture_diagnostics["callback_error"],
                 "callback_error_count": capture_diagnostics["callback_error_count"],
+                "callback_execution_count": capture_diagnostics["callback_count"],
+                "sample_array_shape": capture_diagnostics["array_shape"],
+                "sample_array_dtype": capture_diagnostics["array_dtype"],
+                "minimum_amplitude": capture_diagnostics["minimum"],
+                "maximum_amplitude": capture_diagnostics["maximum"],
+                "mean_amplitude": capture_diagnostics["mean"],
             }
         )
     if capture_diagnostics["callback_error_count"]:
@@ -789,6 +796,8 @@ elif mode == "🎙️ Live Monitor":
         if engine.live_client is not None:
             transcriber = LiveTranscriptionService(engine.live_client)
             st.session_state.live_transcription_status = "waiting_for_microphone"
+            transcriber.start()
+            st.session_state.live_transcription_status = "connecting"
         else:
             st.session_state.live_transcription_status = "unavailable"
         st.session_state.live_transcriber = transcriber

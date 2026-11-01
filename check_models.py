@@ -24,8 +24,9 @@ try:
     response = client.models.generate_content(model=MODEL, contents="Reply with exactly: OK")
     print(f"SUCCESS: Model '{MODEL}' is reachable. Response: {response.text.strip()}")
 except Exception as e:
-    print(f"FAILED: {e}")
-    if "API_KEY_INVALID" in str(e) or "invalid" in str(e).lower():
+    error_message = str(e).replace(API_KEY, "[redacted]") if API_KEY else str(e)
+    print(f"FAILED: {error_message}")
+    if "API_KEY_INVALID" in error_message or "invalid" in error_message.lower():
         print("Your API key appears to be invalid.")
         print("A valid Gemini API key starts with 'AIza...'")
         print("Get one at: https://aistudio.google.com/")

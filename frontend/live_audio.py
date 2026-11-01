@@ -26,12 +26,32 @@ def consume_receiver_frames(receiver, capture):
 
 def process_audio_frame(frame, capture):
     """Process one WebRTC frame in the streamlit-webrtc worker thread."""
+    capture.record_callback_invocation(frame)
+    frame_format = _safe_frame_attribute(frame, "format")
+    frame_layout = _safe_frame_attribute(frame, "layout")
+    logger.info(
+        "WebRTC audio callback #%d: type=%s sample_rate=%r samples=%r format=%s layout=%s",
+        capture.callback_count,
+        type(frame).__name__,
+        _safe_frame_attribute(frame, "sample_rate"),
+        _safe_frame_attribute(frame, "samples"),
+        getattr(frame_format, "name", frame_format),
+        getattr(frame_layout, "name", frame_layout),
+    )
     try:
         capture.add_frame(frame)
     except Exception as exc:
         capture.record_callback_error(exc)
         logger.exception("WebRTC audio frame callback failed")
     return frame
+
+
+def _safe_frame_attribute(frame, name):
+    try:
+        return getattr(frame, name, None)
+    except Exception as exc:
+        logger.exception("Could not read WebRTC frame.%s", name)
+        return f"<error: {type(exc).__name__}>"
 
 
 class LiveAudioCapture:
@@ -53,12 +73,19 @@ class LiveAudioCapture:
         self.last_frame_sample_rate = None
         self.last_frame_channels = None
         self.last_frame_format = None
+        self.last_frame_layout = None
         self.last_frame_samples = 0
         self.last_frame_duration_ms = 0.0
         self.last_rms = 0.0
         self.processed_frame_count = 0
         self.callback_error = ""
         self.callback_error_count = 0
+        self.callback_count = 0
+        self.last_array_shape = None
+        self.last_array_dtype = None
+        self.last_min = 0.0
+        self.last_max = 0.0
+        self.last_mean = 0.0
         self.lock = threading.Lock()
 
     def pause(self):
@@ -80,8 +107,14 @@ class LiveAudioCapture:
             channels = len(layout.channels) if layout and layout.channels else 0
         except (TypeError, AttributeError):
             channels = 0
-        frame_format = str(getattr(frame, "format", "") or "")
-        frame_samples = int(getattr(frame, "samples", 0) or 0)
+        frame_format_object = getattr(frame, "format", None)
+        frame_format = str(getattr(frame_format_object, "name", frame_format_object) or "")
+        frame_layout_object = getattr(frame, "layout", None)
+        frame_layout = str(getattr(frame_layout_object, "name", frame_layout_object) or "")
+        try:
+            frame_samples = int(getattr(frame, "samples", 0) or 0)
+        except (TypeError, ValueError):
+            frame_samples = 0
         frame_duration_ms = (
             frame_samples / float(sample_rate) * 1000
             if sample_rate and frame_samples
@@ -91,6 +124,7 @@ class LiveAudioCapture:
             self.last_frame_sample_rate = sample_rate
             self.last_frame_channels = channels
             self.last_frame_format = frame_format
+            self.last_frame_layout = frame_layout
             self.last_frame_samples = frame_samples
             self.last_frame_duration_ms = frame_duration_ms
         if not sample_rate or not channels:
@@ -101,6 +135,20 @@ class LiveAudioCapture:
                 frame_format,
             )
             return False
+        raw_array = np.asarray(frame.to_ndarray())
+        if raw_array.size == 0:
+            logger.warning("Received empty decoded WebRTC audio array: shape=%s dtype=%s", raw_array.shape, raw_array.dtype)
+            return False
+        raw_float = self._normalize_samples(raw_array)
+        raw_flat = raw_float.reshape(-1)
+        raw_rms = float(np.sqrt(np.mean(np.square(raw_flat))))
+        with self.lock:
+            self.last_array_shape = tuple(raw_array.shape)
+            self.last_array_dtype = str(raw_array.dtype)
+            self.last_min = float(np.min(raw_float))
+            self.last_max = float(np.max(raw_float))
+            self.last_mean = float(np.mean(raw_float))
+            self.last_rms = round(min(1.0, raw_rms), 6)
         emitted_chunks = []
         with self.lock:
             if self.paused:
@@ -111,12 +159,12 @@ class LiveAudioCapture:
             self.sample_rate = 16000
             self.channels = 1
             for converted in converted_frames:
-                samples = converted.to_ndarray()
+                samples = np.asarray(converted.to_ndarray())
                 pcm_bytes = np.ascontiguousarray(samples).tobytes()
                 if not pcm_bytes:
                     continue
-                normalized = samples.astype(np.float32) / 32768.0
-                rms = float(np.sqrt(np.mean(np.square(normalized))))
+                normalized = self._normalize_samples(samples)
+                rms = float(np.sqrt(np.mean(np.square(normalized.reshape(-1)))))
                 if self.total_bytes + len(pcm_bytes) > self.max_bytes:
                     self.limit_reached = True
                     return False
@@ -126,7 +174,6 @@ class LiveAudioCapture:
                 capture_seconds = self.total_bytes / 32000
                 self.amplitudes.append(amplitude)
                 self.amplitude_points.append((capture_seconds, amplitude))
-                self.last_rms = round(min(1.0, rms), 6)
                 emitted_chunks.append((pcm_bytes, capture_seconds, time.monotonic()))
                 self.processed_frame_count += 1
             pcm_sink = self.pcm_sink
@@ -135,6 +182,25 @@ class LiveAudioCapture:
             for pcm_bytes, captured_seconds, captured_monotonic in emitted_chunks:
                 pcm_sink(pcm_bytes, captured_seconds, captured_monotonic)
         return bool(emitted_chunks)
+
+    @staticmethod
+    def _normalize_samples(samples):
+        samples = np.asarray(samples)
+        if np.issubdtype(samples.dtype, np.floating):
+            return samples.astype(np.float32, copy=False)
+        if np.issubdtype(samples.dtype, np.signedinteger):
+            info = np.iinfo(samples.dtype)
+            scale = max(abs(info.min), info.max)
+            return samples.astype(np.float32) / float(scale)
+        if np.issubdtype(samples.dtype, np.unsignedinteger):
+            info = np.iinfo(samples.dtype)
+            midpoint = (info.max + 1) / 2.0
+            return (samples.astype(np.float32) - midpoint) / midpoint
+        raise TypeError(f"Unsupported audio sample dtype: {samples.dtype}")
+
+    def record_callback_invocation(self, frame):
+        with self.lock:
+            self.callback_count += 1
 
     def diagnostics_snapshot(self):
         with self.lock:
@@ -146,12 +212,19 @@ class LiveAudioCapture:
                 "sample_rate": self.last_frame_sample_rate,
                 "channels": self.last_frame_channels,
                 "format": self.last_frame_format,
+                "layout": self.last_frame_layout,
                 "samples": self.last_frame_samples,
                 "frame_duration_ms": self.last_frame_duration_ms,
                 "rms": self.last_rms,
                 "duration_seconds": self.total_bytes / bytes_per_second if bytes_per_second else 0.0,
                 "callback_error": self.callback_error,
                 "callback_error_count": self.callback_error_count,
+                "callback_count": self.callback_count,
+                "array_shape": self.last_array_shape,
+                "array_dtype": self.last_array_dtype,
+                "minimum": self.last_min,
+                "maximum": self.last_max,
+                "mean": self.last_mean,
             }
 
     def record_callback_error(self, error):

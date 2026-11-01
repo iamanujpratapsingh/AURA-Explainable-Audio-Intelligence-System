@@ -83,6 +83,9 @@ class LiveAudioCaptureTests(unittest.TestCase):
         self.assertEqual(diagnostics["samples"], 160)
         self.assertEqual(diagnostics["frame_duration_ms"], 10.0)
         self.assertGreater(diagnostics["rms"], 0)
+        self.assertEqual(diagnostics["array_shape"], (1, 160))
+        self.assertEqual(diagnostics["array_dtype"], "int16")
+        self.assertGreater(diagnostics["maximum"], 0)
         self.assertIsNotNone(diagnostics["last_frame_monotonic"])
 
     def test_generated_audio_reaches_transcription_queue_sink(self):
@@ -102,6 +105,7 @@ class LiveAudioCaptureTests(unittest.TestCase):
         frame = self.make_frame()
         self.assertIs(process_audio_frame(frame, capture), frame)
         self.assertEqual(capture.diagnostics_snapshot()["frame_count"], 1)
+        self.assertEqual(capture.diagnostics_snapshot()["callback_count"], 1)
 
         invalid = Mock()
         invalid.sample_rate = 16000

@@ -176,6 +176,23 @@ class LiveTranscriptionTests(unittest.TestCase):
         finals = [event for event in service.drain_events() if event["kind"] == "final"]
         self.assertEqual(len(finals), 1)
 
+    def test_generated_pcm_can_be_submitted_before_audio_stream_stop(self):
+        session = FakeLiveSession()
+        service = LiveTranscriptionService(
+            FakeClient(session),
+            finalize_seconds=0.05,
+        )
+        self.assertTrue(service.start())
+        deadline = time.monotonic() + 2
+        while not service.connected and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(service.connected)
+        self.assertTrue(service.submit_audio(b"\x01\x00" * 160, 0.01, time.monotonic()))
+        self.assertGreaterEqual(service.diagnostics["submitted_audio_chunks"], 1)
+        self.assertTrue(service.stop(join_timeout=2))
+        events = service.drain_events()
+        self.assertTrue(any(event["kind"] == "final" for event in events))
+
 
 if __name__ == "__main__":
     unittest.main()
