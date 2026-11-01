@@ -29,7 +29,7 @@ def process_audio_frame(frame, capture):
     capture.record_callback_invocation(frame)
     frame_format = _safe_frame_attribute(frame, "format")
     frame_layout = _safe_frame_attribute(frame, "layout")
-    logger.info(
+    logger.debug(
         "WebRTC audio callback #%d: type=%s sample_rate=%r samples=%r format=%s layout=%s",
         capture.callback_count,
         type(frame).__name__,

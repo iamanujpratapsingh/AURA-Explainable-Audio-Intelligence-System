@@ -864,8 +864,6 @@ elif mode == "🎙️ Live Monitor":
         if engine.live_client is not None:
             transcriber = LiveTranscriptionService(engine.live_client)
             st.session_state.live_transcription_status = "waiting_for_microphone"
-            transcriber.start()
-            st.session_state.live_transcription_status = "connecting"
         else:
             st.session_state.live_transcription_status = "unavailable"
         st.session_state.live_transcriber = transcriber
